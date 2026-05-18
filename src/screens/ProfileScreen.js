@@ -121,7 +121,11 @@ const ProfileScreen = ({ navigation }) => {
         });
       }
 
-      const response = await api.put('/staff/update-profile', formData);
+      const response = await api.put('/staff/update-profile', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
 
       if (response.data.success) {
         await updateUser({ avatar: response.data.data.avatar });
