@@ -101,7 +101,12 @@ const ProfileScreen = ({ navigation }) => {
       const formData = new FormData();
       const filename = uri.split('/').pop();
       const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : `image`;
+      let type = match ? `image/${match[1]}` : `image/jpeg`;
+      
+      // Standardize jpg/jpeg mime types
+      if (type === 'image/jpg') {
+        type = 'image/jpeg';
+      }
 
       if (Platform.OS === 'web') {
         const response = await fetch(uri);
@@ -109,7 +114,7 @@ const ProfileScreen = ({ navigation }) => {
         formData.append('avatar', blob, filename);
       } else {
         formData.append('avatar', {
-          uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+          uri: uri, // Keeping the full file:// schema is required by Axios to read local device assets in React Native
           name: filename,
           type,
         });
