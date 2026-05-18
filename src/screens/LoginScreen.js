@@ -17,6 +17,7 @@ import Button from '../components/Button';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import toast from '../utils/toast';
+import Loader from '../components/Loader';
 
 const LoginScreen = ({ navigation }) => {
   const { signIn } = useAuth();
@@ -89,6 +90,7 @@ const LoginScreen = ({ navigation }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       className="flex-1 bg-white"
     >
+      <Loader visible={loading} message={showOTP ? 'Verifying OTP...' : 'Authenticating...'} />
       <ScrollView 
         contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24, justifyContent: 'center', paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}

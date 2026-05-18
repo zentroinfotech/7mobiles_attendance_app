@@ -19,10 +19,12 @@ import toast from '../utils/toast';
 import { Platform } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
+import Loader from '../components/Loader';
 
 const DashboardScreen = ({ navigation }) => {
   const { user, signOut, dashboardData, fetchDashboardData } = useAuth();
   const [status, setStatus] = useState('Pending');
+  const [loading, setLoading] = useState(!dashboardData);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState(dashboardData?.stats || null);
   const [history, setHistory] = useState(dashboardData?.history || []);
@@ -97,7 +99,8 @@ const DashboardScreen = ({ navigation }) => {
     }
   };
 
-  const fetchStats = async () => {
+  const fetchStats = async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     try {
       const data = await fetchDashboardData();
       if (data) {
@@ -106,6 +109,8 @@ const DashboardScreen = ({ navigation }) => {
     } catch (error) {
       console.error('Error fetching stats:', error);
       toast.error('Unable to update statistics.', { title: 'Fetch Error' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -178,8 +183,9 @@ const DashboardScreen = ({ navigation }) => {
   useEffect(() => {
     if (dashboardData) {
       processData(dashboardData);
+      setLoading(false);
     }
-    fetchStats();
+    fetchStats(!dashboardData);
   }, []);
 
   const formatDate = (dateString) => {
@@ -254,6 +260,7 @@ const DashboardScreen = ({ navigation }) => {
 
   return (
     <View className="flex-1 bg-white">
+      <Loader visible={loading} message="Loading dashboard..." />
       <Header 
         title="Dashboard" 
         showProfile

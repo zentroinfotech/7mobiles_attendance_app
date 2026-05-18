@@ -13,6 +13,7 @@ import { COLORS } from '../theme/colors';
 import Header from '../components/Header';
 import api from '../services/api';
 import Toast from 'react-native-toast-message';
+import Loader from '../components/Loader';
 
 const AttendanceHistoryScreen = ({ navigation }) => {
   const [history, setHistory] = useState([]);
@@ -144,19 +145,15 @@ const AttendanceHistoryScreen = ({ navigation }) => {
         showLogo={false}
       />
 
-      {loading && !refreshing ? (
-        <View className="flex-1 justify-center items-center">
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text className="mt-4 text-slate-400 font-bold tracking-widest uppercase text-[10px]">Syncing Records...</Text>
-        </View>
-      ) : (
-        <ScrollView 
-          className="flex-1"
-          contentContainerStyle={{ paddingBottom: 40 }}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
-          }
-        >
+      <Loader visible={loading && !refreshing} message="Syncing records..." />
+
+      <ScrollView 
+        className="flex-1"
+        contentContainerStyle={{ paddingBottom: 40 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+        }
+      >
           {/* Dashboard Summary (Original Style) */}
           <View className="p-6 pb-0">
             <Text className="text-[20px] font-bold text-black mb-4">Monthly Performance</Text>
@@ -323,7 +320,6 @@ const AttendanceHistoryScreen = ({ navigation }) => {
             )}
           </View>
         </ScrollView>
-      )}
     </View>
   );
 };

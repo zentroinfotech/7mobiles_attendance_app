@@ -21,6 +21,7 @@ import Header from '../components/Header';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import Toast from 'react-native-toast-message';
+import Loader from '../components/Loader';
 
 const ProfileScreen = ({ navigation }) => {
   const { user, signOut, updateUser } = useAuth();
@@ -448,16 +449,7 @@ const ProfileScreen = ({ navigation }) => {
       </Modal>
 
       {/* Full Screen Loading Overlay */}
-      {isUpdating && (
-        <Modal transparent={true} animationType="fade" visible={isUpdating}>
-          <View className="flex-1 justify-center items-center bg-black/40">
-            <View className="bg-white/95 p-6 rounded-2xl items-center shadow-xl border border-slate-100">
-              <ActivityIndicator size="large" color={COLORS.primary} />
-              <Text className="text-slate-800 font-extrabold mt-4 text-sm tracking-wide">Updating Profile...</Text>
-            </View>
-          </View>
-        </Modal>
-      )}
+      <Loader visible={isUpdating} message="Updating profile..." />
     </View>
   );
 };

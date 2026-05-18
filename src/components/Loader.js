@@ -2,7 +2,7 @@ import React from 'react';
 import { View, ActivityIndicator, StyleSheet, Modal, Image, Text } from 'react-native';
 import { COLORS } from '../theme/colors';
 
-const Loader = ({ visible }) => {
+const Loader = ({ visible, message = "Synchronizing data..." }) => {
   return (
     <Modal transparent visible={visible} animationType="fade">
       <View style={styles.container}>
@@ -14,7 +14,7 @@ const Loader = ({ visible }) => {
           />
           <View style={styles.loaderContainer}>
             <ActivityIndicator size="large" color={COLORS.primary} />
-            <Text style={styles.loadingText}>Synchronizing data...</Text>
+            <Text style={styles.loadingText}>{message}</Text>
           </View>
         </View>
       </View>
