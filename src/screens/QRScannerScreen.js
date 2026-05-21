@@ -57,44 +57,55 @@ const QRScannerScreen = ({ navigation, route }) => {
             return;
           }
 
-          // Check if Location Services (GPS) are turned on in settings
-          const servicesEnabled = await Location.hasServicesEnabledAsync();
-          if (!servicesEnabled) {
-            Alert.alert(
-              "GPS Disabled",
-              "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
-              [
-                { 
-                  text: "Cancel", 
-                  style: "cancel", 
-                  onPress: () => navigation.goBack() 
-                },
-                { 
-                  text: "Enable", 
-                  onPress: async () => {
-                    try {
-                      setLocLoading(true);
-                      if (Platform.OS === 'android') {
-                        await Location.enableNetworkProviderAsync();
-                      } else {
-                        await Linking.openSettings();
+          let locationResolved = false;
+          let popupShown = false;
+
+          // Start the 7-second timer for the enable location popup
+          const popupTimeout = setTimeout(async () => {
+            if (!locationResolved) {
+              popupShown = true;
+              const servicesEnabled = await Location.hasServicesEnabledAsync();
+              if (!servicesEnabled) {
+                Alert.alert(
+                  "GPS Disabled",
+                  "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+                  [
+                    { 
+                      text: "Cancel", 
+                      style: "cancel", 
+                      onPress: () => navigation.goBack() 
+                    },
+                    { 
+                      text: "Enable", 
+                      onPress: async () => {
+                        try {
+                          setLocLoading(true);
+                          if (Platform.OS === 'android') {
+                            await Location.enableNetworkProviderAsync();
+                          } else {
+                            await Linking.openSettings();
+                          }
+                          setScannerLocation(null);
+                        } catch (err) {
+                          console.log('[Scanner GPS] Enable provider error:', err.message);
+                          await Linking.openSettings();
+                          setScannerLocation(null);
+                        }
                       }
-                      setScannerLocation(null);
-                    } catch (err) {
-                      console.log('[Scanner GPS] Enable provider error:', err.message);
-                      await Linking.openSettings();
-                      setScannerLocation(null);
                     }
-                  }
-                }
-              ]
-            );
-            return;
-          }
-          
+                  ]
+                );
+              }
+            }
+          }, 7000);
+
           const pos = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.Balanced,
           });
+
+          locationResolved = true;
+          clearTimeout(popupTimeout);
+
           if (pos && pos.coords) {
             const coords = {
               latitude: pos.coords.latitude,
@@ -105,11 +116,41 @@ const QRScannerScreen = ({ navigation, route }) => {
           }
         } catch (err) {
           console.log('[Scanner GPS] Error acquiring location:', err.message);
-          Alert.alert(
-            "GPS Error",
-            "Could not acquire your precise GPS location. Please retry from the dashboard.",
-            [{ text: "OK", onPress: () => navigation.goBack() }]
-          );
+          // Only show error or popup if we haven't already prompted the user via the 7-second timer
+          const servicesEnabled = await Location.hasServicesEnabledAsync();
+          if (!servicesEnabled) {
+            Alert.alert(
+              "GPS Disabled",
+              "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+              [
+                { text: "Cancel", style: "cancel", onPress: () => navigation.goBack() },
+                {
+                  text: "Enable",
+                  onPress: async () => {
+                    try {
+                      setLocLoading(true);
+                      if (Platform.OS === 'android') {
+                        await Location.enableNetworkProviderAsync();
+                      } else {
+                        await Linking.openSettings();
+                      }
+                      setScannerLocation(null);
+                    } catch (e) {
+                      console.log('[Scanner GPS] Enable provider error:', e.message);
+                      await Linking.openSettings();
+                      setScannerLocation(null);
+                    }
+                  }
+                }
+              ]
+            );
+          } else {
+            Alert.alert(
+              "GPS Error",
+              "Could not acquire your precise GPS location. Please retry from the dashboard.",
+              [{ text: "OK", onPress: () => navigation.goBack() }]
+            );
+          }
         } finally {
           setLocLoading(false);
         }

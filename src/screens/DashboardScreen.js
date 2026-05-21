@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -42,6 +42,8 @@ const DashboardScreen = ({ navigation }) => {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [villageName, setVillageName] = useState(null);
 
+  const isFirstEntryRef = useRef(true);
+
   const resolveVillageName = async (coords) => {
     try {
       const address = await Location.reverseGeocodeAsync(coords);
@@ -70,7 +72,6 @@ const DashboardScreen = ({ navigation }) => {
 
   const preFetchLocation = async () => {
     try {
-      setLocationLoading(true);
       // 1. Check permissions first in the background
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
@@ -78,6 +79,83 @@ const DashboardScreen = ({ navigation }) => {
       // 2. Check if GPS services are active
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       if (!servicesEnabled) {
+        if (isFirstEntryRef.current) {
+          isFirstEntryRef.current = false;
+          Alert.alert(
+            "GPS Disabled",
+            "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+            [
+              { text: "Cancel", style: "cancel" },
+              { 
+                text: "Enable", 
+                onPress: async () => {
+                  try {
+                    setLocationLoading(true);
+                    if (Platform.OS === 'android') {
+                      await Location.enableNetworkProviderAsync();
+                    } else {
+                      await Linking.openSettings();
+                    }
+                    preFetchLocation();
+                  } catch (err) {
+                    console.log('[Dashboard GPS] Enable provider error:', err.message);
+                    await Linking.openSettings();
+                    preFetchLocation();
+                  }
+                }
+              }
+            ]
+          );
+        }
+        return;
+      }
+
+      // If GPS is active on first entry, also toggle the ref to false
+      isFirstEntryRef.current = false;
+
+      // 3. Fetch current location in background
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      if (location && location.coords) {
+        const coords = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        };
+        setCurrentLocation(coords);
+        await resolveVillageName(coords);
+        console.log('[Dashboard Pre-fetch] Background location obtained:', coords);
+      }
+    } catch (e) {
+      console.log('[Dashboard Pre-fetch] Background fetch error:', e.message);
+    }
+  };
+
+  const handleScanPress = async () => {
+    // If location is already pre-fetched in background, navigate instantly!
+    if (currentLocation) {
+      console.log('[Dashboard Scan] Utilizing pre-fetched coordinates:', currentLocation);
+      navigation.navigate('QRScanner', { location: currentLocation });
+      return;
+    }
+
+    try {
+      // 1. Check & Request Location Permission (Done first so loading overlay doesn't block OS popup)
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          "Location Required",
+          "Location access is mandatory to mark attendance. Please enable location permissions in your settings.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
+      // 2. If it's the first time and GPS is off, show the settings popup instantly!
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled && isFirstEntryRef.current) {
+        isFirstEntryRef.current = false;
         Alert.alert(
           "GPS Disabled",
           "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
@@ -110,84 +188,56 @@ const DashboardScreen = ({ navigation }) => {
         return;
       }
 
-      // 3. Fetch current location in background
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
+      // Toggle first entry ref to false on scan press
+      isFirstEntryRef.current = false;
 
-      if (location && location.coords) {
-        const coords = {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude
-        };
-        setCurrentLocation(coords);
-        await resolveVillageName(coords);
-        console.log('[Dashboard Pre-fetch] Background location obtained:', coords);
-      }
-    } catch (e) {
-      console.log('[Dashboard Pre-fetch] Background fetch error:', e.message);
-    } finally {
-      setLocationLoading(false);
-    }
-  };
-
-  const handleScanPress = async () => {
-    // If location is already pre-fetched in background, navigate instantly!
-    if (currentLocation) {
-      console.log('[Dashboard Scan] Utilizing pre-fetched coordinates:', currentLocation);
-      navigation.navigate('QRScanner', { location: currentLocation });
-      return;
-    }
-
-    try {
-      // 1. Check & Request Location Permission (Done first so loading overlay doesn't block OS popup)
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          "Location Required",
-          "Location access is mandatory to mark attendance. Please enable location permissions in your settings.",
-          [{ text: "OK" }]
-        );
-        return;
-      }
-
-      // 2. Check if GPS Location Services are enabled
-      const servicesEnabled = await Location.hasServicesEnabledAsync();
-      if (!servicesEnabled) {
-        Alert.alert(
-          "GPS Disabled",
-          "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
-          [
-            { 
-              text: "Cancel", 
-              style: "cancel" 
-            },
-            { 
-              text: "Enable", 
-              onPress: async () => {
-                try {
-                  setLocationLoading(true);
-                  if (Platform.OS === 'android') {
-                    await Location.enableNetworkProviderAsync();
-                  } else {
-                    await Linking.openSettings();
-                  }
-                  preFetchLocation();
-                } catch (err) {
-                  console.log('[Dashboard GPS] Enable provider error:', err.message);
-                  await Linking.openSettings();
-                  preFetchLocation();
-                }
-              }
-            }
-          ]
-        );
-        return;
-      }
-
-      // 3. Start the loading screen now that popups are done
+      // 3. Start the loading screen now that permission and first entry checks are done
       setLocationLoading(true);
       setLoaderMessage("Acquiring GPS Location...");
+
+      let locationResolved = false;
+      let popupShown = false;
+
+      // Start the 7-second timer for the enable location popup
+      const popupTimeout = setTimeout(async () => {
+        if (!locationResolved) {
+          popupShown = true;
+          const servicesEnabled = await Location.hasServicesEnabledAsync();
+          if (!servicesEnabled) {
+            Alert.alert(
+              "GPS Disabled",
+              "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+              [
+                { 
+                  text: "Cancel", 
+                  style: "cancel",
+                  onPress: () => setLocationLoading(false)
+                },
+                { 
+                  text: "Enable", 
+                  onPress: async () => {
+                    try {
+                      setLocationLoading(true);
+                      if (Platform.OS === 'android') {
+                        await Location.enableNetworkProviderAsync();
+                      } else {
+                        await Linking.openSettings();
+                      }
+                      preFetchLocation();
+                    } catch (err) {
+                      console.log('[Dashboard GPS] Enable provider error:', err.message);
+                      await Linking.openSettings();
+                      preFetchLocation();
+                    }
+                  }
+                }
+              ]
+            );
+          } else {
+            setLoaderMessage("Weak GPS signal. Still acquiring...");
+          }
+        }
+      }, 7000);
 
       // 4. Fetch Precise Location Coordinates (timeout fallback after 12 seconds)
       const locationPromise = Location.getCurrentPositionAsync({
@@ -201,14 +251,52 @@ const DashboardScreen = ({ navigation }) => {
       let location;
       try {
         location = await Promise.race([locationPromise, timeoutPromise]);
+        locationResolved = true;
+        clearTimeout(popupTimeout);
       } catch (locErr) {
+        locationResolved = true;
+        clearTimeout(popupTimeout);
         console.log('[Dashboard Scan] Location fetch error:', locErr.message);
-        Alert.alert(
-          "Location Timeout",
-          "Unable to fetch your precise location. Please make sure you have a clear sky or try restarting your GPS.",
-          [{ text: "OK" }]
-        );
-        setLocationLoading(false);
+        
+        if (!popupShown) {
+          const servicesEnabled = await Location.hasServicesEnabledAsync();
+          if (!servicesEnabled) {
+            Alert.alert(
+              "GPS Disabled",
+              "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+              [
+                { text: "Cancel", style: "cancel", onPress: () => setLocationLoading(false) },
+                {
+                  text: "Enable",
+                  onPress: async () => {
+                    try {
+                      setLocationLoading(true);
+                      if (Platform.OS === 'android') {
+                        await Location.enableNetworkProviderAsync();
+                      } else {
+                        await Linking.openSettings();
+                      }
+                      preFetchLocation();
+                    } catch (err) {
+                      console.log('[Dashboard GPS] Enable provider error:', err.message);
+                      await Linking.openSettings();
+                      preFetchLocation();
+                    }
+                  }
+                }
+              ]
+            );
+          } else {
+            Alert.alert(
+              "Location Timeout",
+              "Unable to fetch your precise location. Please make sure you have a clear sky or try restarting your GPS.",
+              [{ text: "OK" }]
+            );
+            setLocationLoading(false);
+          }
+        } else {
+          setLocationLoading(false);
+        }
         return;
       }
 
