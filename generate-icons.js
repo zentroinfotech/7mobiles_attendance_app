@@ -15,6 +15,7 @@ async function generateIcons() {
         fit: 'contain',
         background: { r: 255, g: 255, b: 255, alpha: 0 }
       })
+      .png({ quality: 80, compressionLevel: 9, effort: 10 })
       .toFile(path.join(ASSETS_DIR, 'icon.png'));
     console.log('✓ icon.png generated');
 
@@ -24,12 +25,14 @@ async function generateIcons() {
         fit: 'contain',
         background: { r: 255, g: 255, b: 255, alpha: 0 }
       })
+      .png({ quality: 80, compressionLevel: 9, effort: 10 })
       .toFile(path.join(ASSETS_DIR, 'adaptive-icon.png'));
     console.log('✓ adaptive-icon.png generated');
 
     // 3. Favicon (48x48)
     await sharp(SOURCE_IMAGE)
       .resize(48, 48)
+      .png({ quality: 80, compressionLevel: 9, effort: 10 })
       .toFile(path.join(ASSETS_DIR, 'favicon.png'));
     console.log('✓ favicon.png generated');
 
@@ -39,6 +42,7 @@ async function generateIcons() {
         fit: 'contain',
         background: { r: 255, g: 255, b: 255, alpha: 0 }
       })
+      .png({ quality: 80, compressionLevel: 9, effort: 10 })
       .toFile(path.join(ASSETS_DIR, 'splash.png'));
     console.log('✓ splash.png generated');
 

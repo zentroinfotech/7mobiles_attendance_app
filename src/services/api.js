@@ -45,6 +45,12 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response && (error.response.status === 401 || error.response.status === 403)) {
       const errorMessage = error.response.data?.message || '';
+      const errorCode = error.response.data?.code || '';
+      
+      // Geofencing Check Bypass: Do NOT log out the user if the rejection is due to being too far from branch
+      if (errorCode === 'LOCATION_OUT_OF_BOUNDS' || errorCode === 'LOCATION_REQUIRED' || errorMessage.toLowerCase().includes('meters away') || errorMessage.toLowerCase().includes('gps location')) {
+        return Promise.reject(error);
+      }
       
       // Handle device mismatch specifically if requested
       if (errorMessage.toLowerCase().includes('device') || errorMessage.toLowerCase().includes('registered')) {

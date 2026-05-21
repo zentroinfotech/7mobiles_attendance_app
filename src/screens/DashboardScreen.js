@@ -9,14 +9,17 @@ import {
   Alert,
   Modal,
   ActivityIndicator,
-  Animated
+  AppState,
+  Linking,
+  Animated,
+  Platform
 } from 'react-native';
 import { Clock, QrCode, Bell, Calendar, ArrowRight, Megaphone, Zap, LogOut } from 'lucide-react-native';
 import { COLORS } from '../theme/colors';
 import Header from '../components/Header';
 import api from '../services/api';
 import toast from '../utils/toast';
-import { Platform } from 'react-native';
+import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 import Loader from '../components/Loader';
@@ -34,6 +37,199 @@ const DashboardScreen = ({ navigation }) => {
 
   const [checkoutScale] = useState(new Animated.Value(0.85));
   const [logoutScale] = useState(new Animated.Value(0.85));
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [loaderMessage, setLoaderMessage] = useState("Loading dashboard...");
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [villageName, setVillageName] = useState(null);
+
+  const resolveVillageName = async (coords) => {
+    try {
+      const address = await Location.reverseGeocodeAsync(coords);
+      if (address && address.length > 0) {
+        const item = address[0];
+        const parts = [];
+        if (item.name && item.name !== item.street) parts.push(item.name);
+        if (item.street && item.street !== item.name) parts.push(item.street);
+        if (item.subregion) parts.push(item.subregion);
+        if (item.city) parts.push(item.city);
+        if (item.district) parts.push(item.district);
+        if (item.region) parts.push(item.region);
+        
+        // Join unique parts to construct a full descriptive address
+        const uniqueParts = [...new Set(parts.filter(Boolean))];
+        const fullAddress = uniqueParts.join(', ');
+        if (fullAddress) {
+          setVillageName(fullAddress);
+          console.log('[Dashboard GPS] Resolved full address:', fullAddress);
+        }
+      }
+    } catch (err) {
+      console.log('[Dashboard GPS] Reverse geocoding failed:', err.message);
+    }
+  };
+
+  const preFetchLocation = async () => {
+    try {
+      setLocationLoading(true);
+      // 1. Check permissions first in the background
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+
+      // 2. Check if GPS services are active
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        Alert.alert(
+          "GPS Disabled",
+          "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+          [
+            { 
+              text: "Cancel", 
+              style: "cancel",
+              onPress: () => setLocationLoading(false)
+            },
+            { 
+              text: "Enable", 
+              onPress: async () => {
+                try {
+                  setLocationLoading(true);
+                  if (Platform.OS === 'android') {
+                    await Location.enableNetworkProviderAsync();
+                  } else {
+                    await Linking.openSettings();
+                  }
+                  preFetchLocation();
+                } catch (err) {
+                  console.log('[Dashboard GPS] Enable provider error:', err.message);
+                  await Linking.openSettings();
+                  preFetchLocation();
+                }
+              }
+            }
+          ]
+        );
+        return;
+      }
+
+      // 3. Fetch current location in background
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      if (location && location.coords) {
+        const coords = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        };
+        setCurrentLocation(coords);
+        await resolveVillageName(coords);
+        console.log('[Dashboard Pre-fetch] Background location obtained:', coords);
+      }
+    } catch (e) {
+      console.log('[Dashboard Pre-fetch] Background fetch error:', e.message);
+    } finally {
+      setLocationLoading(false);
+    }
+  };
+
+  const handleScanPress = async () => {
+    // If location is already pre-fetched in background, navigate instantly!
+    if (currentLocation) {
+      console.log('[Dashboard Scan] Utilizing pre-fetched coordinates:', currentLocation);
+      navigation.navigate('QRScanner', { location: currentLocation });
+      return;
+    }
+
+    try {
+      // 1. Check & Request Location Permission (Done first so loading overlay doesn't block OS popup)
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          "Location Required",
+          "Location access is mandatory to mark attendance. Please enable location permissions in your settings.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
+      // 2. Check if GPS Location Services are enabled
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        Alert.alert(
+          "GPS Disabled",
+          "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+          [
+            { 
+              text: "Cancel", 
+              style: "cancel" 
+            },
+            { 
+              text: "Enable", 
+              onPress: async () => {
+                try {
+                  setLocationLoading(true);
+                  if (Platform.OS === 'android') {
+                    await Location.enableNetworkProviderAsync();
+                  } else {
+                    await Linking.openSettings();
+                  }
+                  preFetchLocation();
+                } catch (err) {
+                  console.log('[Dashboard GPS] Enable provider error:', err.message);
+                  await Linking.openSettings();
+                  preFetchLocation();
+                }
+              }
+            }
+          ]
+        );
+        return;
+      }
+
+      // 3. Start the loading screen now that popups are done
+      setLocationLoading(true);
+      setLoaderMessage("Acquiring GPS Location...");
+
+      // 4. Fetch Precise Location Coordinates (timeout fallback after 12 seconds)
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Location retrieval timed out")), 12000)
+      );
+
+      let location;
+      try {
+        location = await Promise.race([locationPromise, timeoutPromise]);
+      } catch (locErr) {
+        console.log('[Dashboard Scan] Location fetch error:', locErr.message);
+        Alert.alert(
+          "Location Timeout",
+          "Unable to fetch your precise location. Please make sure you have a clear sky or try restarting your GPS.",
+          [{ text: "OK" }]
+        );
+        setLocationLoading(false);
+        return;
+      }
+
+      setLocationLoading(false);
+      
+      const coords = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude
+      };
+      
+      // Cache coordinates for future use
+      setCurrentLocation(coords);
+      await resolveVillageName(coords);
+
+      // Navigate to QRScanner and pass coordinates
+      navigation.navigate('QRScanner', { location: coords });
+    } catch (error) {
+      console.log('[Dashboard Scan] Scan press failed:', error.message);
+      setLocationLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (checkoutModalVisible) {
@@ -115,6 +311,9 @@ const DashboardScreen = ({ navigation }) => {
   };
 
   const getScannerVisibility = () => {
+    // Always enable the scanner card during development
+    return { visible: true, shiftLabel: 'Development' };
+    
     if (!user?.shiftIn) return { visible: true };
     
     const now = new Date();
@@ -186,7 +385,30 @@ const DashboardScreen = ({ navigation }) => {
       setLoading(false);
     }
     fetchStats(!dashboardData);
-  }, []);
+    
+    // Register focus listener to clear and fetch fresh GPS coordinates every time the screen is entered
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      console.log('[Dashboard] Screen focused. Clearing stale location and pre-fetching fresh GPS coordinates...');
+      setCurrentLocation(null);
+      setVillageName(null);
+      preFetchLocation();
+    });
+
+    // Register AppState listener to clear and fetch fresh GPS coordinates when returning from background
+    const appStateSubscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        console.log('[Dashboard] App returned to foreground. Clearing stale location and pre-fetching fresh GPS coordinates...');
+        setCurrentLocation(null);
+        setVillageName(null);
+        preFetchLocation();
+      }
+    });
+
+    return () => {
+      unsubscribeFocus();
+      appStateSubscription.remove();
+    };
+  }, [navigation]);
 
   const formatDate = (dateString) => {
     try {
@@ -260,7 +482,7 @@ const DashboardScreen = ({ navigation }) => {
 
   return (
     <View className="flex-1 bg-white">
-      <Loader visible={loading} message="Loading dashboard..." />
+      <Loader visible={loading || locationLoading} message={loaderMessage} />
       <Header 
         title="Dashboard" 
         showProfile
@@ -436,13 +658,45 @@ const DashboardScreen = ({ navigation }) => {
                 </View>
                 <Text className="text-2xl font-black text-slate-800 mb-2">Mark Attendance</Text>
                 <Text className="text-slate-500 text-xs leading-5">Scan the store's QR code to record your arrival or departure.</Text>
+                <View className="flex-row items-center mt-3 gap-x-2">
+                  <View className={`w-2 h-2 rounded-full ${
+                    currentLocation ? 'bg-green-500' : 
+                    locationLoading ? 'bg-amber-500' : 'bg-amber-500'
+                  }`} />
+                  <Text className={`text-[11px] font-black uppercase tracking-wider ${
+                    currentLocation ? 'text-green-600' : 'text-amber-600'
+                  }`}>
+                    {currentLocation 
+                      ? `GPS Ready (${currentLocation.latitude.toFixed(5)}, ${currentLocation.longitude.toFixed(5)})` : 
+                      locationLoading ? 'Fetching GPS coords...' : 'GPS location pending...'
+                    }
+                  </Text>
+                </View>
+
+                {currentLocation && villageName && (
+                  <View className="bg-slate-50 border border-slate-100/80 px-3 py-2 rounded-2xl mt-3 flex-row items-start gap-x-2">
+                    <Text className="text-slate-600 text-[10px] leading-4 font-black flex-1 uppercase tracking-wider">
+                      📍 Address: {villageName}
+                    </Text>
+                  </View>
+                )}
               </View>
               <TouchableOpacity 
-                className="bg-primary px-5 py-5 rounded-[28px] justify-center items-center shadow-lg shadow-primary/30"
-                onPress={() => navigation.navigate('QRScanner')}
+                className="bg-primary px-5 py-5 rounded-[28px] justify-center items-center shadow-lg shadow-primary/30 min-w-[95px]"
+                onPress={handleScanPress}
+                disabled={locationLoading}
               >
-                <QrCode color="white" size={32} />
-                <Text className="text-white text-[10px] font-black uppercase tracking-wider mt-2">Scan Now</Text>
+                {locationLoading ? (
+                  <>
+                    <ActivityIndicator color="white" size="small" style={{ height: 32 }} />
+                    <Text className="text-white text-[9px] font-black uppercase tracking-wider mt-2">Fetching...</Text>
+                  </>
+                ) : (
+                  <>
+                    <QrCode color="white" size={32} />
+                    <Text className="text-white text-[10px] font-black uppercase tracking-wider mt-2">Scan Now</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           )}

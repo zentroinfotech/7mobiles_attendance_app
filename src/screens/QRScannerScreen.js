@@ -1,24 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
-import {Text,View,StyleSheet,TouchableOpacity,Alert,Dimensions,Animated,Easing  } from 'react-native';
+import { Text, View, StyleSheet, TouchableOpacity, Alert, Dimensions, Animated, Easing, ActivityIndicator, Linking, Platform } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { X, Zap, RefreshCw, Info, CheckCircle } from 'lucide-react-native';
+import { X, Zap, RefreshCw, Info } from 'lucide-react-native';
 import { COLORS } from '../theme/colors';
-import axios from 'axios';
 import api from '../services/api';
 import Loader from '../components/Loader';
 import toast from '../utils/toast';
 import * as Application from 'expo-application';
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
+import * as Location from 'expo-location';
 
 const { width, height } = Dimensions.get('window');
 const scannerSize = width * 0.75;
 
-const QRScannerScreen = ({ navigation }) => {
+const QRScannerScreen = ({ navigation, route }) => {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
   const [torch, setTorch] = useState(false);
+  const [loaderMessage, setLoaderMessage] = useState("Synchronizing data...");
+  
+  // Location States
+  const [scannerLocation, setScannerLocation] = useState(route.params?.location || null);
+  const [locLoading, setLocLoading] = useState(!route.params?.location);
   
   const scanAnim = useRef(new Animated.Value(0)).current;
 
@@ -36,7 +40,83 @@ const QRScannerScreen = ({ navigation }) => {
     }
   }, [scanned]);
 
+  // Fallback / Active GPS coordinates fetcher inside the scanner
+  useEffect(() => {
+    if (!scannerLocation) {
+      const getScannerLocation = async () => {
+        try {
+          setLocLoading(true);
+          // Check/Request Foreground Permission
+          let { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert(
+              "Permission Denied",
+              "GPS location is required to verify your store bounds. Please enable location permissions.",
+              [{ text: "OK", onPress: () => navigation.goBack() }]
+            );
+            return;
+          }
 
+          // Check if Location Services (GPS) are turned on in settings
+          const servicesEnabled = await Location.hasServicesEnabledAsync();
+          if (!servicesEnabled) {
+            Alert.alert(
+              "GPS Disabled",
+              "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
+              [
+                { 
+                  text: "Cancel", 
+                  style: "cancel", 
+                  onPress: () => navigation.goBack() 
+                },
+                { 
+                  text: "Enable", 
+                  onPress: async () => {
+                    try {
+                      setLocLoading(true);
+                      if (Platform.OS === 'android') {
+                        await Location.enableNetworkProviderAsync();
+                      } else {
+                        await Linking.openSettings();
+                      }
+                      setScannerLocation(null);
+                    } catch (err) {
+                      console.log('[Scanner GPS] Enable provider error:', err.message);
+                      await Linking.openSettings();
+                      setScannerLocation(null);
+                    }
+                  }
+                }
+              ]
+            );
+            return;
+          }
+          
+          const pos = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          if (pos && pos.coords) {
+            const coords = {
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude
+            };
+            setScannerLocation(coords);
+            console.log('[Scanner GPS] Coordinates resolved:', coords);
+          }
+        } catch (err) {
+          console.log('[Scanner GPS] Error acquiring location:', err.message);
+          Alert.alert(
+            "GPS Error",
+            "Could not acquire your precise GPS location. Please retry from the dashboard.",
+            [{ text: "OK", onPress: () => navigation.goBack() }]
+          );
+        } finally {
+          setLocLoading(false);
+        }
+      };
+      getScannerLocation();
+    }
+  }, [scannerLocation]);
 
   const startAnimation = () => {
     scanAnim.setValue(0);
@@ -79,8 +159,21 @@ const QRScannerScreen = ({ navigation }) => {
   const handleBarCodeScanned = async ({ data }) => {
     if (scanned) return;
     
+    // Retrieve resolved coordinates
+    const location = scannerLocation;
+
+    if (!location) {
+      Alert.alert(
+        "Location Missing",
+        "Could not find valid location coordinates. Please wait for the GPS coordinates to resolve.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
+
     setScanned(true);
     setLoading(true);
+    setLoaderMessage("Verifying Attendance...");
 
     try {
       // 1. Get or Generate Persistent Device ID
@@ -114,25 +207,40 @@ const QRScannerScreen = ({ navigation }) => {
 
       const payload = {
         token: data,
-        androidId: deviceId
+        androidId: deviceId,
+        location: {
+          latitude: location.latitude,
+          longitude: location.longitude
+        }
       };
 
       // 2. Send to backend
       console.log('[Attendance Scan] Sending Payload:', JSON.stringify(payload, null, 2));
       const response = await api.post('/staff/mark-attendance', payload);
 
+      // Clear coordinates immediately upon receiving response to ensure fresh fetching next time
+      setScannerLocation(null);
+
       if (response.data.success) {
-        navigation.replace('AttendanceSuccess');
+        navigation.replace('AttendanceSuccess', { success: true, data: response.data.data });
       } else {
-        // Most errors (401/403) are handled by the interceptor
-        // Only handle other success=false cases here if any
         setScanned(false);
       }
     } catch (error) {
-      // Interceptor handles 401/403 (logout + toast)
-      // We just need to reset the scanner state if it wasn't a logout error
       console.log('[Attendance Scan] Scan failed:', error.message);
-      setScanned(false);
+      
+      // Clear coordinates immediately upon receiving failure response to force fresh re-fetching
+      setScannerLocation(null);
+
+      const errorMessage = error.response?.data?.message || "An error occurred while marking attendance.";
+      const errorCode = error.response?.data?.code;
+      
+      if (errorCode === 'LOCATION_OUT_OF_BOUNDS' || errorCode === 'LOCATION_REQUIRED') {
+        navigation.replace('AttendanceSuccess', { success: false, errorMessage: errorMessage });
+      } else {
+        toast.error(errorMessage, { title: "Verification Failed" });
+        setScanned(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -149,7 +257,7 @@ const QRScannerScreen = ({ navigation }) => {
         className="flex-1"
         style={{ flex: 1 }}
         facing="back"
-        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+        onBarcodeScanned={scanned || locLoading ? undefined : handleBarCodeScanned}
         enableTorch={torch}
         barcodeScannerSettings={{
           barcodeTypes: ["qr"],
@@ -168,7 +276,7 @@ const QRScannerScreen = ({ navigation }) => {
               <View className="absolute bottom-0 left-0 w-[30px] h-[30px] border-b-4 border-l-4 border-primary rounded-bl-[15px]" />
               <View className="absolute bottom-0 right-0 w-[30px] h-[30px] border-b-4 border-r-4 border-primary rounded-br-[15px]" />
               
-              {!scanned && (
+              {!scanned && !locLoading && (
                 <Animated.View 
                   className="h-[2px] bg-primary w-full absolute shadow-lg shadow-green-500"
                   style={{ transform: [{ translateY }] }}
@@ -189,11 +297,29 @@ const QRScannerScreen = ({ navigation }) => {
           <TouchableOpacity 
             className="w-12 h-12 rounded-full bg-white/15 justify-center items-center border border-white/20"
             onPress={() => navigation.goBack()}
+            disabled={loading}
           >
             <X color={COLORS.white} size={24} />
           </TouchableOpacity>
           
-          <Text className="text-white text-base font-black tracking-[3px] uppercase">Scan QR Code</Text>
+          <View className="items-center">
+            <Text className="text-white text-base font-black tracking-[3px] uppercase">Scan QR Code</Text>
+            {scannerLocation ? (
+              <View className="flex-row bg-green-500/10 border border-green-500/20 px-3 py-1 rounded-full items-center gap-x-1.5 mt-2">
+                <View className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                <Text className="text-green-500 text-[9px] font-black uppercase tracking-wider">
+                  GPS Active: {scannerLocation.latitude.toFixed(5)}, {scannerLocation.longitude.toFixed(5)}
+                </Text>
+              </View>
+            ) : (
+              <View className="flex-row bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full items-center gap-x-1.5 mt-2">
+                <View className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                <Text className="text-amber-500 text-[9px] font-black uppercase tracking-wider">
+                  GPS Fetching...
+                </Text>
+              </View>
+            )}
+          </View>
           
           <TouchableOpacity 
             className={`w-12 h-12 rounded-full justify-center items-center border border-white/20 ${
@@ -227,7 +353,26 @@ const QRScannerScreen = ({ navigation }) => {
         </View>
       </View>
       
-      <Loader visible={loading} />
+      {/* Fallback GPS Fetching Overlay (Loading Circle) */}
+      {locLoading && (
+        <View style={StyleSheet.absoluteFillObject} className="bg-black/90 justify-center items-center z-50">
+          <View className="bg-white/10 p-8 rounded-[40px] items-center border border-white/20">
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text className="text-white font-black mt-5 text-base tracking-[2px] uppercase">Fetching GPS...</Text>
+            <Text className="text-gray-400 text-xs mt-2 text-center max-w-[200px] leading-5">
+              Please wait while we resolve your exact location coordinates.
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* Backend Scan dispatch Loader Overlay */}
+      {loading && (
+        <View style={StyleSheet.absoluteFillObject} className="bg-black/80 justify-center items-center z-[60]">
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text className="text-white font-black mt-5 text-[15px] tracking-[2px] uppercase">{loaderMessage}</Text>
+        </View>
+      )}
     </View>
   );
 };
