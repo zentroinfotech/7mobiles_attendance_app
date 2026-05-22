@@ -12,8 +12,10 @@ import {
   AppState,
   Linking,
   Animated,
-  Platform
+  Platform,
+  ImageBackground
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Clock, QrCode, Bell, Calendar, ArrowRight, Megaphone, Zap, LogOut, MapPin } from 'lucide-react-native';
 import { COLORS } from '../theme/colors';
 import Header from '../components/Header';
@@ -600,7 +602,14 @@ const DashboardScreen = ({ navigation }) => {
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
-    await fetchStats();
+    await Promise.all([
+      fetchStats(),
+      (async () => {
+        setCurrentLocation(null);
+        setVillageName(null);
+        await preFetchLocation(true);
+      })()
+    ]);
     setRefreshing(false);
   }, []);
 
@@ -645,7 +654,7 @@ const DashboardScreen = ({ navigation }) => {
   ];
 
   return (
-    <View className="flex-1 bg-white">
+    <LinearGradient colors={['#F8FAFC', '#F1F5F9', '#E2E8F0']} className="flex-1">
       <Loader visible={loading || locationLoading} message={loaderMessage} />
       <Header 
         title="Dashboard" 
@@ -654,201 +663,140 @@ const DashboardScreen = ({ navigation }) => {
       />
       
       <ScrollView 
-        contentContainerStyle={{ padding: '6%', paddingBottom: 40 }}
+        contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
         }
+        showsVerticalScrollIndicator={false}
       >
-        <View className="mb-5">
-          <Text className="text-2xl font-[800] text-black">
+        <View className="mb-6">
+          <Text className="text-[28px] font-black text-slate-900 tracking-tight">
             Hello, {user?.name ? user.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') : 'User'} 👋
           </Text>
-          <Text className="text-base text-gray-500 mt-1">
+          <Text className="text-[15px] font-medium text-slate-500 mt-1">
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </Text>
         </View>
 
         <View 
-          className={`p-5 md:p-6 rounded-[24px] mb-5 shadow-sm border ${
-            status === 'Checked In' || status === 'Full Day' ? 'bg-green-50 border-green-100' : 
-            status === 'Checked Out' ? 'bg-blue-50 border-blue-100' : 
-            status === 'Marked Absent' ? 'bg-red-50 border-red-100' : 
-            status === 'Half Day' ? 'bg-orange-50 border-orange-100' : 
-            'bg-slate-50 border-slate-100'
+          className={`p-6 rounded-[32px] mb-6 shadow-xl ${
+            status === 'Checked In' || status === 'Full Day' ? 'bg-emerald-500 shadow-emerald-500/20' : 
+            status === 'Checked Out' ? 'bg-blue-500 shadow-blue-500/20' : 
+            status === 'Marked Absent' ? 'bg-rose-500 shadow-rose-500/20' : 
+            status === 'Half Day' ? 'bg-amber-500 shadow-amber-500/20' : 
+            'bg-slate-800 shadow-slate-800/20'
           }`}
         >
-          <View className="flex-row items-center justify-between mb-4">
+          <View className="flex-row items-center justify-between mb-5">
             <View className="flex-row items-center flex-1 mr-2">
-              <View className={`w-9 h-9 rounded-full items-center justify-center mr-2 ${
-                status === 'Checked In' || status === 'Full Day' ? 'bg-green-100' : 
-                status === 'Checked Out' ? 'bg-blue-100' : 
-                status === 'Half Day' ? 'bg-orange-100' : 
-                'bg-slate-200'
-              }`}>
-                <Clock color={
-                  status === 'Checked In' || status === 'Full Day' ? COLORS.success : 
-                  status === 'Checked Out' ? '#2563EB' : 
-                  status === 'Half Day' ? '#EA580C' : 
-                  COLORS.textSecondary
-                } size={18} />
+              <View className="w-12 h-12 rounded-full items-center justify-center mr-3 bg-white/20">
+                <Clock color="white" size={24} />
               </View>
               <View>
-                <Text className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mb-0.5">Current Status</Text>
-                <Text className={`text-base font-black ${
-                  status === 'Checked In' || status === 'Full Day' ? 'text-green-700' : 
-                  status === 'Checked Out' ? 'text-blue-700' : 
-                  status === 'Half Day' ? 'text-orange-700' : 
-                  'text-slate-700'
-                }`} numberOfLines={1}>
+                <Text className="text-[10px] text-white/70 font-black uppercase tracking-widest mb-1">Current Status</Text>
+                <Text className="text-xl font-black text-white tracking-tight" numberOfLines={1}>
                   {status}
                 </Text>
               </View>
             </View>
-            <View className="items-end">
-              <Text className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Shift Milestones</Text>
-              <View className="bg-white/50 px-2 py-0.5 rounded-lg border border-slate-200/50">
-                <Text className="text-[10px] font-black text-slate-700">In: {user?.shiftIn || '09:00'}</Text>
-                <Text className="text-[10px] font-black text-slate-700">Ev: {user?.eveningShiftIn || '15:00'}</Text>
-                <Text className="text-[10px] font-black text-slate-700">Out: {user?.shiftOut || '21:30'}</Text>
+            <View className="items-end bg-white/10 px-3 py-2 rounded-2xl border border-white/20">
+              <Text className="text-[9px] text-white/70 font-black uppercase tracking-widest mb-1">Milestones</Text>
+              <View className="flex-row gap-x-2">
+                <Text className="text-xs font-black text-white">In: {user?.shiftIn || '09:00'}</Text>
+                <Text className="text-xs font-black text-white">Out: {user?.shiftOut || '21:30'}</Text>
               </View>
             </View>
           </View>
 
-            <View className="flex-row flex-wrap gap-2 pt-4 border-t border-slate-200/50">
-              <View className="flex-1 min-w-[85px] bg-white/60 p-3 rounded-2xl border border-white/80">
-                <Text className="text-[10px] text-slate-400 font-bold uppercase mb-1">Morning</Text>
-                <Text className="text-sm font-black text-slate-800">
-                  {stats?.todayDetails?.morningCheckIn ? formatTime(stats.todayDetails.morningCheckIn) : '--:--'}
-                </Text>
-                <View className={`${
-                  stats?.todayDetails?.morningStatus === 'present' ? 'bg-green-100' : 
-                  stats?.todayDetails?.morningStatus === 'late' ? 'bg-amber-100' : 
-                  stats?.todayDetails?.morningStatus === 'absent' ? 'bg-red-100' : 'bg-slate-100'
-                } self-start px-1.5 py-0.5 rounded mt-1`}>
-                  <Text className={`text-[8px] font-black uppercase ${
-                    stats?.todayDetails?.morningStatus === 'present' ? 'text-green-700' : 
-                    stats?.todayDetails?.morningStatus === 'late' ? 'text-amber-700' : 
-                    stats?.todayDetails?.morningStatus === 'absent' ? 'text-red-700' : 'text-slate-500'
-                  }`}>
-                    {stats?.todayDetails?.morningStatus || 'pending'}
-                  </Text>
-                </View>
-              </View>
-              <View className="flex-1 min-w-[85px] bg-white/60 p-3 rounded-2xl border border-white/80">
-                <Text className="text-[10px] text-slate-400 font-bold uppercase mb-1">Evening</Text>
-                <Text className="text-sm font-black text-slate-800">
-                  {stats?.todayDetails?.eveningCheckIn ? formatTime(stats.todayDetails.eveningCheckIn) : '--:--'}
-                </Text>
-                <View className={`${
-                  stats?.todayDetails?.eveningStatus === 'present' ? 'bg-green-100' : 
-                  stats?.todayDetails?.eveningStatus === 'late' ? 'bg-amber-100' : 
-                  stats?.todayDetails?.eveningStatus === 'absent' ? 'bg-red-100' : 'bg-slate-100'
-                } self-start px-1.5 py-0.5 rounded mt-1`}>
-                  <Text className={`text-[8px] font-black uppercase ${
-                    stats?.todayDetails?.eveningStatus === 'present' ? 'text-green-700' : 
-                    stats?.todayDetails?.eveningStatus === 'late' ? 'text-amber-700' : 
-                    stats?.todayDetails?.eveningStatus === 'absent' ? 'text-red-700' : 'text-slate-500'
-                  }`}>
-                    {stats?.todayDetails?.eveningStatus || 'pending'}
-                  </Text>
-                </View>
-              </View>
-              <View className="flex-1 min-w-[85px] bg-white/60 p-3 rounded-2xl border border-white/80">
-                <Text className="text-[10px] text-slate-400 font-bold uppercase mb-1">Check Out</Text>
-                <Text className="text-sm font-black text-slate-800">
-                  {stats?.todayDetails?.checkOut ? formatTime(stats.todayDetails.checkOut) : '--:--'}
-                </Text>
-                <View className={`${
-                  stats?.todayDetails?.checkOut ? 'bg-green-100' : 'bg-slate-100'
-                } self-start px-1.5 py-0.5 rounded mt-1`}>
-                  <Text className={`text-[8px] font-black uppercase ${
-                    stats?.todayDetails?.checkOut ? 'text-green-700' : 'text-slate-500'
-                  }`}>
-                    {stats?.todayDetails?.checkOut ? 'completed' : 'pending'}
-                  </Text>
-                </View>
-              </View>
-            </View>
-        </View>
-
-        <View className="mb-5">
-          <Text className="text-[20px] font-bold text-black mb-4">Monthly Attendance</Text>
-          <View className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-            <View className="flex-row justify-between items-center mb-4">
-              <View>
-                <Text className="text-xs text-gray-400 font-bold tracking-wider uppercase mb-1">Total Attendance</Text>
-                <Text className="text-xl font-black text-black">{stats?.totalPresent || 0} Days</Text>
-              </View>
-              <View className="bg-green-100 px-3 py-1.5 rounded-full">
-                <Text className="text-green-600 font-extrabold text-xs">
-                  {stats?.totalPresent ? Math.min(100, Math.round((stats.totalPresent / 26) * 100)) : 0}%
+          <View className="flex-row gap-2 pt-5 border-t border-white/20">
+            <View className="flex-1 bg-white/10 p-3 rounded-2xl border border-white/20">
+              <Text className="text-[10px] text-white/70 font-black uppercase tracking-wider mb-1">Morning</Text>
+              <Text className="text-base font-black text-white">
+                {stats?.todayDetails?.morningCheckIn ? formatTime(stats.todayDetails.morningCheckIn) : '--:--'}
+              </Text>
+              <View className="bg-white/20 self-start px-2 py-1 rounded-md mt-1.5">
+                <Text className="text-[9px] font-black uppercase text-white tracking-wider">
+                  {stats?.todayDetails?.morningStatus || 'pending'}
                 </Text>
               </View>
             </View>
             
-            <View className="h-2 bg-gray-100 rounded-full overflow-hidden mb-4">
-              <View 
-                className="h-full bg-primary rounded-full" 
-                style={{ width: `${stats?.totalPresent ? Math.min(100, Math.round((stats.totalPresent / 26) * 100)) : 0}%` }} 
-              />
+            <View className="flex-1 bg-white/10 p-3 rounded-2xl border border-white/20">
+              <Text className="text-[10px] text-white/70 font-black uppercase tracking-wider mb-1">Evening</Text>
+              <Text className="text-base font-black text-white">
+                {stats?.todayDetails?.eveningCheckIn ? formatTime(stats.todayDetails.eveningCheckIn) : '--:--'}
+              </Text>
+              <View className="bg-white/20 self-start px-2 py-1 rounded-md mt-1.5">
+                <Text className="text-[9px] font-black uppercase text-white tracking-wider">
+                  {stats?.todayDetails?.eveningStatus || 'pending'}
+                </Text>
+              </View>
             </View>
-
-            <View className="flex-row justify-between pt-1">
-              <View className="flex-row items-center">
-                <View className="w-2 h-2 rounded-full mr-2 bg-primary" />
-                <Text className="text-xs text-gray-500 font-semibold">Present</Text>
-              </View>
-              <View className="flex-row items-center">
-                <View className="w-2 h-2 rounded-full mr-2 bg-[#FF3B30]" />
-                <Text className="text-xs text-gray-500 font-semibold">Absent</Text>
-              </View>
-              <View className="flex-row items-center">
-                <View className="w-2 h-2 rounded-full mr-2 bg-[#E1E1E1]" />
-                <Text className="text-xs text-gray-500 font-semibold">Pending</Text>
+            
+            <View className="flex-1 bg-white/10 p-3 rounded-2xl border border-white/20">
+              <Text className="text-[10px] text-white/70 font-black uppercase tracking-wider mb-1">Check Out</Text>
+              <Text className="text-base font-black text-white">
+                {stats?.todayDetails?.checkOut ? formatTime(stats.todayDetails.checkOut) : '--:--'}
+              </Text>
+              <View className="bg-white/20 self-start px-2 py-1 rounded-md mt-1.5">
+                <Text className="text-[9px] font-black uppercase text-white tracking-wider">
+                  {stats?.todayDetails?.checkOut ? 'completed' : 'pending'}
+                </Text>
               </View>
             </View>
           </View>
         </View>
 
+        {/* Recent Activity */}
         <View className="mb-6">
-          <Text className="text-[20px] font-bold text-black mb-4">Daily Action</Text>
-          
-          {/* 1. QR Scanner Card (Visible when scanner window is active and shift check-in is pending) */}
-          {getScannerVisibility().visible && (
-            <View className="bg-white rounded-[32px] p-6 flex-row items-center justify-between shadow-xl shadow-slate-200/50 border border-slate-100 mb-4">
-              <View className="flex-1 mr-4">
-                <View className="bg-primary/10 self-start px-3 py-1 rounded-full mb-3">
-                  <Text className="text-primary-600 text-[10px] font-black uppercase tracking-[2px]">Action Required</Text>
-                </View>
-                <Text className="text-2xl font-black text-slate-800 mb-2">Mark Attendance</Text>
-                <Text className="text-slate-500 text-xs leading-5">Scan the store's QR code to record your arrival or departure.</Text>
-                <View className="flex-row items-center mt-3 gap-x-2">
-                  <View className={`w-2 h-2 rounded-full ${
-                    currentLocation ? 'bg-green-500' : 
-                    locationLoading ? 'bg-amber-500' : 'bg-amber-500'
-                  }`} />
-                  <Text className={`text-[11px] font-black uppercase tracking-wider ${
-                    currentLocation ? 'text-green-600' : 'text-amber-600'
-                  }`}>
-                    {currentLocation 
-                      ? `GPS Ready (${currentLocation.latitude.toFixed(5)}, ${currentLocation.longitude.toFixed(5)})` : 
-                      locationLoading ? 'Fetching GPS coords...' : 'GPS location pending...'
-                    }
-                  </Text>
-                </View>
-
-                {currentLocation && villageName && (
-                  <View className="bg-slate-50 border border-slate-100/80 px-3 py-2 rounded-2xl mt-3 flex-row items-start gap-x-2">
-                    <Text className="text-slate-600 text-[10px] leading-4 font-black flex-1 uppercase tracking-wider">
-                      📍 Address: {villageName}
-                    </Text>
+          <View className="flex-row justify-between items-center mb-4">
+            <Text className="text-[20px] font-black text-slate-800 tracking-tight">Recent Activity</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('AttendanceHistory')}>
+              <Text className="text-primary-600 text-sm font-bold">See All</Text>
+            </TouchableOpacity>
+          </View>
+          {history.length > 0 ? (
+            history.map((log) => {
+              const statusInfo = getStatusInfo(log.status);
+              return (
+                <View key={log._id || log.date} className="flex-row items-center bg-white p-4 rounded-2xl mb-3 shadow-sm border border-slate-100/50">
+                  <View 
+                    className={`w-12 h-12 rounded-[16px] justify-center items-center mr-4 ${statusInfo.bg}`}
+                  >
+                    <Clock color={statusInfo.color} size={20} />
                   </View>
-                )}
+                  <View className="flex-1">
+                    <View className="flex-row justify-between items-center mb-1">
+                      <Text className="text-sm font-black text-slate-900">{formatDate(log.date)}</Text>
+                      <View className="px-2 py-0.5 rounded-full" style={{ backgroundColor: `${statusInfo.color}15` }}>
+                        <Text style={{ color: statusInfo.color }} className="text-[9px] font-black uppercase tracking-wider">
+                          {statusInfo.label}
+                        </Text>
+                      </View>
+                    </View>
+                    <View className="flex-row justify-between items-center">
+                      <Text className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
+                        In: {log.morningCheckIn ? formatTime(log.morningCheckIn) : '--:--'} • Out: {log.checkOut ? formatTime(log.checkOut) : '--:--'}
+                      </Text>
+                      <Text className="text-[10px] text-slate-400 font-bold uppercase">{log.branch || 'Office'}</Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })
+          ) : (
+            <View className="bg-slate-50 p-6 rounded-2xl items-center border border-dashed border-slate-200">
+              <Text className="text-slate-400 font-medium">No recent activity found</Text>
+            </View>
+          )}
+        </View>
 
-                <TouchableOpacity
-                  className={`flex-row items-center justify-center border rounded-full px-3.5 py-2 mt-3 self-start ${
-                    fetchingLiveLoc || locationLoading ? 'bg-slate-100 border-slate-200' : 'bg-primary/10 border-primary/20'
-                  }`}
+        <View className="mb-8">
+          <View className="flex-row items-center justify-between mb-4">
+            <Text className="text-[20px] font-black text-slate-800 tracking-tight">Daily Action</Text>
+          </View>
+          
+          {getScannerVisibility().visible && (
                   onPress={() => preFetchLocation(true)}
                   disabled={fetchingLiveLoc || locationLoading}
                 >
