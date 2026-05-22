@@ -14,7 +14,7 @@ import {
   Animated,
   Platform
 } from 'react-native';
-import { Clock, QrCode, Bell, Calendar, ArrowRight, Megaphone, Zap, LogOut } from 'lucide-react-native';
+import { Clock, QrCode, Bell, Calendar, ArrowRight, Megaphone, Zap, LogOut, MapPin } from 'lucide-react-native';
 import { COLORS } from '../theme/colors';
 import Header from '../components/Header';
 import api from '../services/api';
@@ -41,8 +41,11 @@ const DashboardScreen = ({ navigation }) => {
   const [loaderMessage, setLoaderMessage] = useState("Loading dashboard...");
   const [currentLocation, setCurrentLocation] = useState(null);
   const [villageName, setVillageName] = useState(null);
+  const [fetchingLiveLoc, setFetchingLiveLoc] = useState(false);
 
   const isFirstEntryRef = useRef(true);
+  const isFetchingLocationRef = useRef(false);
+  const isSystemPromptActiveRef = useRef(false);
 
   const resolveVillageName = async (coords) => {
     try {
@@ -51,7 +54,7 @@ const DashboardScreen = ({ navigation }) => {
         const item = address[0];
         const parts = [];
         if (item.name && item.name !== item.street) parts.push(item.name);
-        if (item.street && item.street !== item.name) parts.push(item.street);
+        if (item.street && item.street !== item.name) parts.push(item.name);
         if (item.subregion) parts.push(item.subregion);
         if (item.city) parts.push(item.city);
         if (item.district) parts.push(item.district);
@@ -70,37 +73,71 @@ const DashboardScreen = ({ navigation }) => {
     }
   };
 
-  const preFetchLocation = async () => {
+  const preFetchLocation = async (isManual = false) => {
+    if (isFetchingLocationRef.current) {
+      console.log('[Dashboard Pre-fetch] Location fetch already in progress. Skipping duplicate call.');
+      return;
+    }
+    isFetchingLocationRef.current = true;
+    if (isManual) {
+      setFetchingLiveLoc(true);
+    }
     try {
       // 1. Check permissions first in the background
+      isSystemPromptActiveRef.current = true;
       let { status } = await Location.requestForegroundPermissionsAsync();
+      isSystemPromptActiveRef.current = false;
       if (status !== 'granted') return;
 
-      // 2. Check if GPS services are active
+      // 2. Try Cached Last Known Position first for speed and absolute crash-safety (only when NOT manual live fetch)
+      if (!isManual) {
+        const lastKnown = await Location.getLastKnownPositionAsync({
+          maxAge: 60000, // 1 minute fresh
+        });
+        if (lastKnown && lastKnown.coords) {
+          const coords = {
+            latitude: lastKnown.coords.latitude,
+            longitude: lastKnown.coords.longitude
+          };
+          setCurrentLocation(coords);
+          await resolveVillageName(coords);
+          console.log('[Dashboard Pre-fetch] Using fast cached last-known position:', coords);
+          return;
+        }
+      }
+
+      // 3. Check if GPS services are active
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       if (!servicesEnabled) {
-        if (isFirstEntryRef.current) {
+        if (isFirstEntryRef.current || isManual) {
           isFirstEntryRef.current = false;
+          isSystemPromptActiveRef.current = true;
           Alert.alert(
             "GPS Disabled",
             "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
             [
-              { text: "Cancel", style: "cancel" },
+              { 
+                text: "Cancel", 
+                style: "cancel",
+                onPress: () => { isSystemPromptActiveRef.current = false; }
+              },
               { 
                 text: "Enable", 
                 onPress: async () => {
                   try {
+                    isSystemPromptActiveRef.current = true;
                     setLocationLoading(true);
                     if (Platform.OS === 'android') {
                       await Location.enableNetworkProviderAsync();
                     } else {
                       await Linking.openSettings();
                     }
-                    preFetchLocation();
                   } catch (err) {
                     console.log('[Dashboard GPS] Enable provider error:', err.message);
                     await Linking.openSettings();
-                    preFetchLocation();
+                  } finally {
+                    setLocationLoading(false);
+                    isSystemPromptActiveRef.current = false;
                   }
                 }
               }
@@ -113,10 +150,15 @@ const DashboardScreen = ({ navigation }) => {
       // If GPS is active on first entry, also toggle the ref to false
       isFirstEntryRef.current = false;
 
-      // 3. Fetch current location in background
-      const location = await Location.getCurrentPositionAsync({
+      // 4. Fetch current location with safety timeout of 8 seconds to prevent hanging indefinitely
+      const locationPromise = Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Background location fetch timed out")), 8000)
+      );
+
+      const location = await Promise.race([locationPromise, timeoutPromise]);
 
       if (location && location.coords) {
         const coords = {
@@ -129,6 +171,11 @@ const DashboardScreen = ({ navigation }) => {
       }
     } catch (e) {
       console.log('[Dashboard Pre-fetch] Background fetch error:', e.message);
+    } finally {
+      isFetchingLocationRef.current = false;
+      if (isManual) {
+        setFetchingLiveLoc(false);
+      }
     }
   };
 
@@ -141,21 +188,25 @@ const DashboardScreen = ({ navigation }) => {
     }
 
     try {
-      // 1. Check & Request Location Permission (Done first so loading overlay doesn't block OS popup)
+      // 1. Check & Request Location Permission
+      isSystemPromptActiveRef.current = true;
       let { status } = await Location.requestForegroundPermissionsAsync();
+      isSystemPromptActiveRef.current = false;
       if (status !== 'granted') {
+        isSystemPromptActiveRef.current = true;
         Alert.alert(
           "Location Required",
           "Location access is mandatory to mark attendance. Please enable location permissions in your settings.",
-          [{ text: "OK" }]
+          [{ text: "OK", onPress: () => { isSystemPromptActiveRef.current = false; } }]
         );
         return;
       }
 
-      // 2. If it's the first time and GPS is off, show the settings popup instantly!
+      // 2. If it's the first time and GPS is off, show settings instantly!
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       if (!servicesEnabled && isFirstEntryRef.current) {
         isFirstEntryRef.current = false;
+        isSystemPromptActiveRef.current = true;
         Alert.alert(
           "GPS Disabled",
           "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
@@ -163,23 +214,28 @@ const DashboardScreen = ({ navigation }) => {
             { 
               text: "Cancel", 
               style: "cancel",
-              onPress: () => setLocationLoading(false)
+              onPress: () => {
+                setLocationLoading(false);
+                isSystemPromptActiveRef.current = false;
+              }
             },
             { 
               text: "Enable", 
               onPress: async () => {
                 try {
+                  isSystemPromptActiveRef.current = true;
                   setLocationLoading(true);
                   if (Platform.OS === 'android') {
                     await Location.enableNetworkProviderAsync();
                   } else {
                     await Linking.openSettings();
                   }
-                  preFetchLocation();
                 } catch (err) {
                   console.log('[Dashboard GPS] Enable provider error:', err.message);
                   await Linking.openSettings();
-                  preFetchLocation();
+                } finally {
+                  setLocationLoading(false);
+                  isSystemPromptActiveRef.current = false;
                 }
               }
             }
@@ -191,19 +247,20 @@ const DashboardScreen = ({ navigation }) => {
       // Toggle first entry ref to false on scan press
       isFirstEntryRef.current = false;
 
-      // 3. Start the loading screen now that permission and first entry checks are done
+      // 3. Start loading screen
       setLocationLoading(true);
       setLoaderMessage("Acquiring GPS Location...");
 
       let locationResolved = false;
       let popupShown = false;
 
-      // Start the 7-second timer for the enable location popup
+      // Start the 7-second timer for enable location popup
       const popupTimeout = setTimeout(async () => {
         if (!locationResolved) {
           popupShown = true;
           const servicesEnabled = await Location.hasServicesEnabledAsync();
           if (!servicesEnabled) {
+            isSystemPromptActiveRef.current = true;
             Alert.alert(
               "GPS Disabled",
               "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
@@ -211,23 +268,28 @@ const DashboardScreen = ({ navigation }) => {
                 { 
                   text: "Cancel", 
                   style: "cancel",
-                  onPress: () => setLocationLoading(false)
+                  onPress: () => {
+                    setLocationLoading(false);
+                    isSystemPromptActiveRef.current = false;
+                  }
                 },
                 { 
                   text: "Enable", 
                   onPress: async () => {
                     try {
+                      isSystemPromptActiveRef.current = true;
                       setLocationLoading(true);
                       if (Platform.OS === 'android') {
                         await Location.enableNetworkProviderAsync();
                       } else {
                         await Linking.openSettings();
                       }
-                      preFetchLocation();
                     } catch (err) {
                       console.log('[Dashboard GPS] Enable provider error:', err.message);
                       await Linking.openSettings();
-                      preFetchLocation();
+                    } finally {
+                      setLocationLoading(false);
+                      isSystemPromptActiveRef.current = false;
                     }
                   }
                 }
@@ -239,7 +301,7 @@ const DashboardScreen = ({ navigation }) => {
         }
       }, 7000);
 
-      // 4. Fetch Precise Location Coordinates (timeout fallback after 12 seconds)
+      // 4. Fetch Precise Location Coordinates (12-second timeout)
       const locationPromise = Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
@@ -261,36 +323,47 @@ const DashboardScreen = ({ navigation }) => {
         if (!popupShown) {
           const servicesEnabled = await Location.hasServicesEnabledAsync();
           if (!servicesEnabled) {
+            isSystemPromptActiveRef.current = true;
             Alert.alert(
               "GPS Disabled",
               "Location services (GPS) are turned off. Please enable location services to verify your store bounds.",
               [
-                { text: "Cancel", style: "cancel", onPress: () => setLocationLoading(false) },
+                { 
+                  text: "Cancel", 
+                  style: "cancel", 
+                  onPress: () => {
+                    setLocationLoading(false);
+                    isSystemPromptActiveRef.current = false;
+                  } 
+                },
                 {
                   text: "Enable",
                   onPress: async () => {
                     try {
+                      isSystemPromptActiveRef.current = true;
                       setLocationLoading(true);
                       if (Platform.OS === 'android') {
                         await Location.enableNetworkProviderAsync();
                       } else {
                         await Linking.openSettings();
                       }
-                      preFetchLocation();
                     } catch (err) {
                       console.log('[Dashboard GPS] Enable provider error:', err.message);
                       await Linking.openSettings();
-                      preFetchLocation();
+                    } finally {
+                      setLocationLoading(false);
+                      isSystemPromptActiveRef.current = false;
                     }
                   }
                 }
               ]
             );
           } else {
+            isSystemPromptActiveRef.current = true;
             Alert.alert(
               "Location Timeout",
               "Unable to fetch your precise location. Please make sure you have a clear sky or try restarting your GPS.",
-              [{ text: "OK" }]
+              [{ text: "OK", onPress: () => { isSystemPromptActiveRef.current = false; } }]
             );
             setLocationLoading(false);
           }
@@ -307,11 +380,9 @@ const DashboardScreen = ({ navigation }) => {
         longitude: location.coords.longitude
       };
       
-      // Cache coordinates for future use
       setCurrentLocation(coords);
       await resolveVillageName(coords);
 
-      // Navigate to QRScanner and pass coordinates
       navigation.navigate('QRScanner', { location: coords });
     } catch (error) {
       console.log('[Dashboard Scan] Scan press failed:', error.message);
@@ -399,9 +470,6 @@ const DashboardScreen = ({ navigation }) => {
   };
 
   const getScannerVisibility = () => {
-    // Always enable the scanner card during development
-    return { visible: true, shiftLabel: 'Development' };
-    
     if (!user?.shiftIn) return { visible: true };
     
     const now = new Date();
@@ -416,7 +484,7 @@ const DashboardScreen = ({ navigation }) => {
     };
 
     const morningStart = getShiftTimeToday(user.shiftIn || "09:00");
-    const eveningStart = getShiftTimeToday(user.eveningShiftIn || "13:00");
+    const eveningStart = getShiftTimeToday(user.eveningShiftIn || "15:00");
 
     // Define 20-min-before and 60-min-after scan windows
     const morningStartWin = new Date(morningStart.getTime() - 20 * 60 * 1000);
@@ -447,8 +515,8 @@ const DashboardScreen = ({ navigation }) => {
     if (now < morningStartWin) {
       return {
         visible: false,
-        title: "Scan Window Not Open",
-        message: `Morning scan window opens at ${formatTime(morningStartWin)}.`
+        title: "Scan Window Closed",
+        message: `Morning window opens at ${formatTime(morningStartWin)}.`
       };
     }
 
@@ -476,18 +544,26 @@ const DashboardScreen = ({ navigation }) => {
     
     // Register focus listener to clear and fetch fresh GPS coordinates every time the screen is entered
     const unsubscribeFocus = navigation.addListener('focus', () => {
-      console.log('[Dashboard] Screen focused. Clearing stale location and pre-fetching fresh GPS coordinates...');
+      console.log('[Dashboard] Screen focused. Clearing stale location and resetting popup state...');
       setCurrentLocation(null);
       setVillageName(null);
+      isFirstEntryRef.current = true; // Reset first-time user location popup
       preFetchLocation();
     });
 
     // Register AppState listener to clear and fetch fresh GPS coordinates when returning from background
     const appStateSubscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
-        console.log('[Dashboard] App returned to foreground. Clearing stale location and pre-fetching fresh GPS coordinates...');
+        console.log('[Dashboard] App returned to foreground. Checking system prompt state...');
+        if (isSystemPromptActiveRef.current) {
+          console.log('[Dashboard] AppState change triggered by internal system prompt. Resetting prompt state and skipping pre-fetch.');
+          isSystemPromptActiveRef.current = false;
+          return;
+        }
+        console.log('[Dashboard] Real App return to foreground. Clearing stale location and resetting popup state...');
         setCurrentLocation(null);
         setVillageName(null);
+        isFirstEntryRef.current = true; // Reset first-time user location popup
         preFetchLocation();
       }
     });
@@ -632,8 +708,8 @@ const DashboardScreen = ({ navigation }) => {
               <Text className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Shift Milestones</Text>
               <View className="bg-white/50 px-2 py-0.5 rounded-lg border border-slate-200/50">
                 <Text className="text-[10px] font-black text-slate-700">In: {user?.shiftIn || '09:00'}</Text>
-                <Text className="text-[10px] font-black text-slate-700">Ev: {user?.eveningShiftIn || '13:00'}</Text>
-                <Text className="text-[10px] font-black text-slate-700">Out: {user?.shiftOut || '19:00'}</Text>
+                <Text className="text-[10px] font-black text-slate-700">Ev: {user?.eveningShiftIn || '15:00'}</Text>
+                <Text className="text-[10px] font-black text-slate-700">Out: {user?.shiftOut || '21:30'}</Text>
               </View>
             </View>
           </View>
@@ -768,6 +844,25 @@ const DashboardScreen = ({ navigation }) => {
                     </Text>
                   </View>
                 )}
+
+                <TouchableOpacity
+                  className={`flex-row items-center justify-center border rounded-full px-3.5 py-2 mt-3 self-start ${
+                    fetchingLiveLoc || locationLoading ? 'bg-slate-100 border-slate-200' : 'bg-primary/10 border-primary/20'
+                  }`}
+                  onPress={() => preFetchLocation(true)}
+                  disabled={fetchingLiveLoc || locationLoading}
+                >
+                  {fetchingLiveLoc ? (
+                    <ActivityIndicator size="small" color="#94A3B8" style={{ transform: [{ scale: 0.8 }] }} />
+                  ) : (
+                    <MapPin size={12} color={COLORS.primary} />
+                  )}
+                  <Text className={`text-[10px] font-black uppercase tracking-wider ml-1.5 ${
+                    fetchingLiveLoc || locationLoading ? 'text-slate-400' : 'text-primary'
+                  }`}>
+                    {fetchingLiveLoc ? 'Fetching GPS...' : 'Get Live Location'}
+                  </Text>
+                </TouchableOpacity>
               </View>
               <TouchableOpacity 
                 className="bg-primary px-5 py-5 rounded-[28px] justify-center items-center shadow-lg shadow-primary/30 min-w-[95px]"
@@ -809,20 +904,24 @@ const DashboardScreen = ({ navigation }) => {
                     : 'Ready to end your workday? Click checkout to record your checkout time.'}
                 </Text>
               </View>
-              <TouchableOpacity 
-                className={`px-5 py-5 rounded-[28px] justify-center items-center shadow-lg ${
-                  hasCheckedOutToday ? 'bg-slate-200 shadow-none' : 'bg-[#DC2626] shadow-red-500/30'
-                }`}
-                disabled={hasCheckedOutToday}
-                onPress={() => setCheckoutModalVisible(true)}
-              >
-                <Clock color={hasCheckedOutToday ? '#94A3B8' : 'white'} size={32} />
-                <Text className={`text-[10px] font-black uppercase tracking-wider mt-2 ${
-                  hasCheckedOutToday ? 'text-slate-400' : 'text-white'
-                }`}>
-                  {hasCheckedOutToday ? 'Done' : 'Check Out'}
-                </Text>
-              </TouchableOpacity>
+              {hasCheckedOutToday ? (
+                <View className="bg-slate-100 px-6 py-4 rounded-2xl justify-center items-center border border-slate-200">
+                  <CheckCircle color="#94A3B8" size={24} />
+                  <Text className="text-[10px] font-black uppercase tracking-wider mt-2 text-slate-400">
+                    Done
+                  </Text>
+                </View>
+              ) : (
+                <TouchableOpacity 
+                  className="px-5 py-5 rounded-[28px] justify-center items-center shadow-lg bg-[#DC2626] shadow-red-500/30"
+                  onPress={() => setCheckoutModalVisible(true)}
+                >
+                  <Clock color="white" size={32} />
+                  <Text className="text-[10px] font-black uppercase tracking-wider mt-2 text-white">
+                    Check Out
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -832,7 +931,13 @@ const DashboardScreen = ({ navigation }) => {
               <View className="bg-slate-200 p-4 rounded-full mb-4">
                 <Clock color={COLORS.textSecondary} size={32} />
               </View>
-              <Text className="text-lg font-black text-slate-700 mb-1">{getScannerVisibility().title}</Text>
+              <Text 
+                className="text-lg font-black text-slate-700 mb-1 text-center" 
+                numberOfLines={1} 
+                adjustsFontSizeToFit
+              >
+                {getScannerVisibility().title}
+              </Text>
               <Text className="text-slate-500 text-sm text-center px-4">
                 {getScannerVisibility().message}
               </Text>
@@ -915,11 +1020,11 @@ const DashboardScreen = ({ navigation }) => {
       >
         <View className="flex-1 bg-black/60 justify-center items-center p-6">
           <Animated.View style={{ transform: [{ scale: checkoutScale }] }} className="bg-white p-6 rounded-2xl w-full max-w-[340px] items-center border border-slate-100 shadow-2xl">
-            <View className="bg-red-50 p-4 rounded-full mb-4 border border-red-100">
+            <View className="bg-red-50 p-4 rounded-full mb-4 border border-red-100 items-center justify-center">
               <LogOut color="#DC2626" size={32} />
             </View>
             
-            <Text className="text-xl font-black text-slate-800 mb-2">Confirm Check-Out</Text>
+            <Text className="text-xl font-black text-slate-800 mb-2 text-center">Confirm Check-Out</Text>
             <Text className="text-slate-500 text-sm text-center mb-6 leading-5">
               Are you sure you want to end your workday and check out? This will register your checkout time.
             </Text>
@@ -958,11 +1063,11 @@ const DashboardScreen = ({ navigation }) => {
       >
         <View className="flex-1 bg-black/60 justify-center items-center p-6">
           <Animated.View style={{ transform: [{ scale: logoutScale }] }} className="bg-white p-6 rounded-2xl w-full max-w-[300px] items-center border border-slate-100 shadow-2xl">
-            <View className="bg-red-50 p-3.5 rounded-full mb-4 border border-red-100">
+            <View className="bg-red-50 p-3.5 rounded-full mb-4 border border-red-100 items-center justify-center">
               <LogOut color="#DC2626" size={28} />
             </View>
             
-            <Text className="text-lg font-black text-slate-800 mb-1.5">Log Out</Text>
+            <Text className="text-lg font-black text-slate-800 mb-1.5 text-center">Log Out</Text>
             <Text className="text-slate-500 text-xs text-center mb-5 leading-4">
               Are you sure you want to log out of your account?
             </Text>

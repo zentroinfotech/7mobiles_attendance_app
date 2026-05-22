@@ -12,7 +12,8 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
-  Animated
+  Animated,
+  RefreshControl
 } from 'react-native';
 import { User, Mail, Shield, Bell, CircleHelp, ChevronRight, LogOut, Camera, Calendar, Phone, Pencil, X } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -24,8 +25,9 @@ import Toast from 'react-native-toast-message';
 import Loader from '../components/Loader';
 
 const ProfileScreen = ({ navigation }) => {
-  const { user, signOut, updateUser } = useAuth();
+  const { user, signOut, updateUser, fetchDashboardData } = useAuth();
   const [notifications, setNotifications] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [newPhoneNumber, setNewPhoneNumber] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -44,6 +46,14 @@ const ProfileScreen = ({ navigation }) => {
       }).start();
     }
   }, [logoutModalVisible]);
+
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    if (fetchDashboardData) {
+      await fetchDashboardData();
+    }
+    setRefreshing(false);
+  }, [fetchDashboardData]);
 
   useEffect(() => {
     if (user?.phoneNumber) {
@@ -175,7 +185,13 @@ const ProfileScreen = ({ navigation }) => {
         showLogo={false}
       />
       
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView 
+        className="flex-1"
+        contentContainerStyle={{ paddingBottom: 40 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+        }
+      >
         {/* ID Card Style Profile */}
         <View className="p-6 items-center">
           <View className="w-full bg-white rounded-[24px] overflow-hidden border border-[#E1E1E1] shadow-xl">
@@ -240,7 +256,7 @@ const ProfileScreen = ({ navigation }) => {
                 </View>
                 <View className="mb-0">
                   <Text className="text-[10px] text-gray-400 font-bold tracking-wider mb-0.5 uppercase">Shift Timing</Text>
-                  <Text className="text-sm font-bold text-primary">{user?.shiftIn || '09:00'} | {user?.eveningShiftIn || '13:00'} | {user?.shiftOut || '19:00'}</Text>
+                  <Text className="text-sm font-bold text-primary">{user?.shiftIn || '09:00'} | {user?.eveningShiftIn || '15:00'} | {user?.shiftOut || '21:30'}</Text>
                 </View>
               </View>
             </View>
@@ -293,31 +309,7 @@ const ProfileScreen = ({ navigation }) => {
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Preferences</Text>
-          <View style={styles.card}>
-            <View style={styles.settingItem}>
-              <View style={styles.settingLeft}>
-                <View style={[styles.settingIcon, { backgroundColor: COLORS.primary + '15' }]}>
-                  <Bell color={COLORS.primary} size={20} />
-                </View>
-                <Text style={styles.settingLabel}>Notifications</Text>
-              </View>
-              <Switch 
-                value={notifications} 
-                onValueChange={setNotifications}
-                trackColor={{ false: '#767577', true: COLORS.primary + '80' }}
-                thumbColor={notifications ? COLORS.primary : '#f4f3f4'}
-              />
-            </View>
-            <SettingItem 
-              icon={CircleHelp} 
-              label="Help & Support" 
-              color="#FF9500"
-              isLast={true}
-            />
-          </View>
-        </View>
+
 
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <LogOut color={COLORS.error} size={20} />

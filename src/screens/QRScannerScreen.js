@@ -25,6 +25,7 @@ const QRScannerScreen = ({ navigation, route }) => {
   const [locLoading, setLocLoading] = useState(!route.params?.location);
   
   const scanAnim = useRef(new Animated.Value(0)).current;
+  const isFetchingRef = useRef(false);
 
   useEffect(() => {
     if (!permission) {
@@ -44,6 +45,11 @@ const QRScannerScreen = ({ navigation, route }) => {
   useEffect(() => {
     if (!scannerLocation) {
       const getScannerLocation = async () => {
+        if (isFetchingRef.current) {
+          console.log('[Scanner GPS] Fetch already in progress. Skipping duplicate fetch.');
+          return;
+        }
+        isFetchingRef.current = true;
         try {
           setLocLoading(true);
           // Check/Request Foreground Permission
@@ -54,6 +60,20 @@ const QRScannerScreen = ({ navigation, route }) => {
               "GPS location is required to verify your store bounds. Please enable location permissions.",
               [{ text: "OK", onPress: () => navigation.goBack() }]
             );
+            return;
+          }
+
+          // 2. Try Cached Last Known Position first for speed and absolute crash-safety
+          const lastKnown = await Location.getLastKnownPositionAsync({
+            maxAge: 60000, // 1 minute fresh
+          });
+          if (lastKnown && lastKnown.coords) {
+            const coords = {
+              latitude: lastKnown.coords.latitude,
+              longitude: lastKnown.coords.longitude
+            };
+            setScannerLocation(coords);
+            console.log('[Scanner GPS] Using fast cached last-known position:', coords);
             return;
           }
 
@@ -85,10 +105,11 @@ const QRScannerScreen = ({ navigation, route }) => {
                           } else {
                             await Linking.openSettings();
                           }
-                          setScannerLocation(null);
                         } catch (err) {
                           console.log('[Scanner GPS] Enable provider error:', err.message);
                           await Linking.openSettings();
+                        } finally {
+                          isFetchingRef.current = false;
                           setScannerLocation(null);
                         }
                       }
@@ -99,9 +120,14 @@ const QRScannerScreen = ({ navigation, route }) => {
             }
           }, 7000);
 
-          const pos = await Location.getCurrentPositionAsync({
+          const locationPromise = Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.Balanced,
           });
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Scanner location fetch timed out")), 8000)
+          );
+
+          const pos = await Promise.race([locationPromise, timeoutPromise]);
 
           locationResolved = true;
           clearTimeout(popupTimeout);
@@ -134,10 +160,11 @@ const QRScannerScreen = ({ navigation, route }) => {
                       } else {
                         await Linking.openSettings();
                       }
-                      setScannerLocation(null);
                     } catch (e) {
                       console.log('[Scanner GPS] Enable provider error:', e.message);
                       await Linking.openSettings();
+                    } finally {
+                      isFetchingRef.current = false;
                       setScannerLocation(null);
                     }
                   }
@@ -153,6 +180,7 @@ const QRScannerScreen = ({ navigation, route }) => {
           }
         } finally {
           setLocLoading(false);
+          isFetchingRef.current = false;
         }
       };
       getScannerLocation();
